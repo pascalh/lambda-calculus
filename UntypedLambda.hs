@@ -9,9 +9,7 @@ module UntypedLambda where
 import Prelude hiding (null,filter,map,length,rem)
 import qualified Data.List as List
 import Data.Set hiding (fold)
-import qualified Data.Map as Map 
 import Data.Tree
-import Data.Function (on)
 
 -- |a variable is represented by a name and a numerical index
 data Var = Var { name :: Char  -- ^ variable name
@@ -36,8 +34,8 @@ instance Show Lambda where
   show (App e1 e2) = "("++show e1++") ("++show e2++")" 
   show t@(Lambda _ _) = 
     let (vs,p) = multipleAbstractions t 
-    in"\\"++(concatMap (\v -> show v ++" ") vs) 
-           ++ ". "++show p
+    in"\\"++concatMap (\v -> show v ++" ") vs 
+          ++ ". "++show p
     where
 
       multipleAbstractions :: Lambda -> ([Var],Lambda)
@@ -69,7 +67,7 @@ freshVars n = fromList . getFreshN' n . toList where
   getFreshN' n (v@(Var c _):vs) = 
     let m = maximum $ 
             List.map index $ 
-            List.filter ((==c) . name) $ 
+            List.filter ((==c) . name) 
             (v:vs)
     in take n $ zipWith Var [c,c..] [1+m,2+m..]
 
@@ -87,7 +85,7 @@ boundVars l = difference (vars l) (freeVars l)
 
 -- |the length of a lambda term, see [1] 1A2 
 length :: Lambda -> Int
-length = fold (\_ l -> 1+l) (+) (\_ -> 1)
+length = fold (\_ l -> 1+l) (+) (const 1)
 
 -- |all subterms of given lambda term, see [1] 1A3
 subterms :: Lambda -> [Lambda]
@@ -139,10 +137,9 @@ betaNF t
 -- |one step beta reduction
 betaReduction :: Lambda -> Lambda
 betaReduction (App (Lambda v e) a) = sub v a e
-betaReduction (App e1 e2)          = 
-  if e1 == (betaReduction e1) 
-  then App e1 (betaReduction e2)
-  else App (betaReduction e1) e2
+betaReduction (App e1 e2)          
+  | e1 == betaReduction e1 = App e1 (betaReduction e2)
+  | otherwise               = App (betaReduction e1) e2
 betaReduction (Lambda v e)         = Lambda v $ betaReduction e
 betaReduction (LVar v)             = LVar v
 
@@ -157,7 +154,7 @@ inEtaNF = not . hasEtaRedex
 hasEtaRedex :: Lambda -> Bool
 hasEtaRedex (LVar _)                    = False
 hasEtaRedex (App e1 e2)                 = hasEtaRedex e1 || hasEtaRedex e2
-hasEtaRedex (Lambda v (App f (LVar u))) = (v==u && (not $ member u $ freeVars f)) || hasEtaRedex f 
+hasEtaRedex (Lambda v (App f (LVar u))) = v==u && not (member u $ freeVars f) || hasEtaRedex f 
 hasEtaRedex (Lambda _ e)                = hasEtaRedex e
 
 -- |computes the eta normal form of a lambda term
@@ -169,12 +166,11 @@ etaNF t
 -- |one step eta reduction
 etaReduction :: Lambda -> Lambda
 etaReduction (Lambda v (App f (LVar u))) 
-  | v==u && (not $ member u $ freeVars f) = etaReduction f
-  | otherwise                             = Lambda v (App (etaReduction f) (LVar u))
-etaReduction (App e1 e2)  = 
-  if e1 == (etaReduction e1)
-  then App e1 (etaReduction e2)
-  else App (etaReduction e1) (etaReduction e2)
+  | v==u && not (member u $ freeVars f) = etaReduction f
+  | otherwise                           = Lambda v (App (etaReduction f) (LVar u))
+etaReduction (App e1 e2)  
+  | e1 == etaReduction e1 = App e1 (etaReduction e2)
+  | otherwise             = App (etaReduction e1) (etaReduction e2)
 etaReduction (Lambda v f) = Lambda v (etaReduction f)
 etaReduction (LVar v)     = LVar v
 
@@ -236,7 +232,7 @@ visualizeBeta l =
 rList :: (Lambda -> Lambda) -> Lambda -> Set Lambda
 rList f (LVar v)  = singleton $ f $ LVar v
 rList f p@(App m n) = insert (f $ betaReduction p) $ 
-  (rList (\x -> f $ App x n) m ) `union` (rList (\x -> f $ App m x) n )
+  rList (\x -> f $ App x n) m  `union` rList (f . App m) n 
 rList f (Lambda v e) = rList (f . Lambda v) e
 
 -- |builds the tree of all possible reductions
@@ -281,18 +277,18 @@ y = let f = Lambda x (App (LVar h) (App (LVar x) (LVar x)))
 -- ** church encodings of basic logic
 true = Lambda x (Lambda v (LVar x))
 false = Lambda x (Lambda v (LVar v))
-implication = Lambda x $ Lambda z $ (LVar x) `App` (LVar z) `App` true
+implication = Lambda x $ Lambda z $ LVar x `App` LVar z `App` true
 
 ifthenelse = 
-  Lambda p $ Lambda a $ Lambda b $ (App (LVar p) (LVar a)) `App` (LVar b)
+  Lambda p $ Lambda a $ Lambda b $ LVar p `App` LVar a `App` LVar b
 
-ifBetaNf = betaNF $ (((ifthenelse `App` true) `App` LVar x1) `App` LVar x2)
+ifBetaNf = betaNF $ ((ifthenelse `App` true) `App` LVar x1) `App` LVar x2
 
 
 -- ** other example functions
 
 bspEta      = Lambda  v (Lambda u (App idLambda (LVar u)))
-bspEtaAlpha = ((Lambda  w) (App (LVar x) (LVar w))) 
+bspEtaAlpha = Lambda  w $ LVar x `App` LVar w
 
 bspBeta = App bspEta (LVar x1)
 
@@ -317,18 +313,18 @@ crt = App (Lambda u idLambda) omega
 -- p200: theories of pl
 
 bspJohn = 
-  (Lambda x $ (Lambda w (LVar w `App` LVar x)) `App` (LVar z))
+  Lambda x (Lambda w (LVar w `App` LVar x) `App` LVar z)
   `App` 
   (LVar z `App` LVar x2)
 
 
 -- an example term for beta-eta reduction. be-reduces to z
-be = (Lambda x $ idLambda `App` LVar z) `App` LVar x
+be = Lambda x (idLambda `App` LVar z) `App` LVar x
 
 
-blaa = (Lambda x $(LVar v) `App` (LVar x)) `App` (Lambda v $ LVar v)
+blaa = Lambda x (LVar v `App` LVar x) `App` Lambda v (LVar v)
 
-ll = Lambda u $ Lambda x2 $ (LVar x)
+ll = Lambda u $ Lambda x2 (LVar x)
 
 
 
